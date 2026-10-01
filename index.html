@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Squid Rush</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      /* No page scroll, pinch-zoom or text selection while playing. */
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #game {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      outline: none;
+    }
+    #error {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      color: #ddd;
+      font: 16px/1.5 system-ui, sans-serif;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- The game: build/squidGame.riv, signed (rive . --publish, see build.sh) and copied next to
+       this page as squidGame.riv. Serve the folder over http; opening the file straight from
+       disk won't load the .riv. -->
+  <canvas id="game" tabindex="0"></canvas>
+  <div id="error">The game couldn't load.</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2/rive.js"></script>
+  <script>
+    const canvas = document.getElementById('game');
+    const RIV_VERSION = '1790871740'; // set by build.sh
+
+    const r = new rive.Rive({
+      // build.sh stamps a new version on every build, so the browser fetches the new file
+      // instead of a cached one.
+      src: 'squidGame.riv?v=' + RIV_VERSION,
+      canvas,
+      artboard: 'Artboard',
+      stateMachines: 'State Machine 1',
+      autoplay: true,
+      autoBind: true,
+      // Lets the CREDITS buttons' url event open be.net/danilofiocco in a new tab.
+      automaticallyHandleEvents: true,
+      // 1920x1080 artboard, letterboxed to fit any window.
+      layout: new rive.Layout({ fit: rive.Fit.Contain, alignment: rive.Alignment.Center }),
+      onLoad: () => {
+        fitCanvas();
+        const vm = r.viewModelInstance;
+        if (vm) {
+          // The game shows Brazilian Portuguese when the system is in Portuguese, else English.
+          const lang = vm.string('systemLanguage');
+          if (lang) lang.value = navigator.language || 'en';
+          // The mouse wheel scrolls the ranking list (in artboard px).
+          const wheel = vm.number('rankingWheel');
+          if (wheel) {
+            canvas.addEventListener('wheel', (e) => {
+              e.preventDefault();
+              const px = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
+              wheel.value += px * 1.5;
+            }, { passive: false });
+          }
+        }
+        if (vm) setupKeyboard(vm);
+        if (vm) setupLeaderboard(vm);
+        canvas.focus();
+      },
+      onLoadError: (e) => {
+        console.error(e);
+        document.getElementById('error').style.display = 'flex';
+      },
+    });
+
+    // ---- Leaderboard ----------------------------------------------------------------------
+    // Shared by everyone: the squid_scores table in Supabase (see LEADERBOARD.md). The
+    // publishable key is meant to be public; the table's policies only allow reading and adding.
+    const LEADERBOARD = {
+      url: 'https://wkhfpujnynwflcimngjg.supabase.co',
+      key: 'sb_publishable_KJAWjztbbgQqlC6IYCYS4g_eeuVSd1z',
+      table: 'squid_scores',
+    };
+    const LIST_MAX = 100; // rows the ranking shows
+    const NAME_MAX = 12;  // matches the game and the table's check
+    const SCORE_MAX = 100000;
+
+    function setupLeaderboard(vm) {
+      const data = vm.string('rankingData');
+      const highlight = vm.number('rankHighlight');
+      const submitted = vm.trigger('scoreSubmitted');
+      if (!data || !highlight || !submitted) return;
+      const base = `${LEADERBOARD.url}/rest/v1/${LEADERBOARD.table}`;
+      const headers = { apikey: LEADERBOARD.key, Authorization: `Bearer ${LEADERBOARD.key}` };
+      const clean = (name) => String(name).replace(/[\t\n]/g, ' ').trim().slice(0, NAME_MAX);
+
+      // The list goes to the game as "NAME<tab>SHELLS" lines, best first (ties: earliest first,
+      // as the game itself orders them); `mine` is the id of the row to light up.
+      function show(rows, mine) {
+        data.value = rows.map((r) => `${clean(r.name)}\t${r.score}`).join('\n');
+        const at = rows.findIndex((r) => r.id === mine);
+        highlight.value = at >= 0 ? at + 1 : 0;
+      }
+      function load() {
+        return fetch(`${base}?select=id,name,score&order=score.desc,id.asc&limit=${LIST_MAX}`, { headers })
+          .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); });
+      }
+      load().then((rows) => show(rows, -1)).catch((e) => console.error('leaderboard', e));
+
+      // The game added the player's name to its own list already; save it for everyone, then
+      // show the shared list with their row lit. (Offline, the game's own list just stays.)
+      submitted.on(() => {
+        const name = clean(vm.string('submittedName').value);
+        const score = Math.round(vm.number('submittedScore').value);
+        if (!name || score < 0 || score > SCORE_MAX) return;
+        fetch(base, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+          body: JSON.stringify({ name, score }),
+        })
+          .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+          .then((created) => load().then((rows) => show(rows, created[0] && created[0].id)))
+          .catch((e) => console.error('leaderboard', e));
+      });
+    }
+
+    // The keyboard: the web runtime doesn't hand keys to the game's script, so the page does.
+    // Each press goes into `hostKeys` as "k<TAB>down|up<TAB>code<TAB>shift" (GLFW key codes, as
+    // the game expects), and each typed character as "t<TAB>char" (for names, accents and all);
+    // the game drains the queue every frame. `hostKeyboard` tells it to ignore the runtime's own
+    // key events so nothing arrives twice.
+    function setupKeyboard(vm) {
+      const queue = vm.string('hostKeys');
+      const flag = vm.number('hostKeyboard');
+      if (!queue || !flag) return;
+      flag.value = 1;
+      const NAMED = { Space: 32, Enter: 257, NumpadEnter: 335, Backspace: 259, Escape: 256,
+        Minus: 45, Period: 46 };
+      const codeOf = (e) => {
+        if (/^Key[A-Z]$/.test(e.code)) return e.code.charCodeAt(3);
+        if (/^Digit[0-9]$/.test(e.code)) return e.code.charCodeAt(5);
+        return NAMED[e.code] || 0;
+      };
+      const push = (line) => { queue.value = queue.value ? queue.value + '\n' + line : line; };
+      const onKey = (phase) => (e) => {
+        if (e.metaKey || e.ctrlKey) return; // leave browser shortcuts alone
+        const code = codeOf(e);
+        if (code) push(['k', phase, code, e.shiftKey ? 1 : 0].join('\t'));
+        if (phase === 'down' && e.key.length === 1 && e.key !== '\t') push('t\t' + e.key);
+        if (code === 32 || code === 259) e.preventDefault(); // no page scroll / back
+      };
+      window.addEventListener('keydown', onKey('down'));
+      window.addEventListener('keyup', onKey('up'));
+    }
+
+    // iPhones mute web audio while the ring/silent switch is on silent; ask for a "playback"
+    // session (like a video) where Safari supports it.
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+
+    // Keep the game's drawing surface (and so its tap positions) matched to the canvas
+    // whenever the canvas changes size.
+    //  - Resolution: drawn at most ~2200 device pixels across (about the artboard's own 1920),
+    //    not the full Retina 2-3x - most of the frame time went into those extra pixels.
+    //  - Responsive: the artboard (1920x1080) is fitted whole; on wider or taller windows the
+    //    game is told which part of artboard space is visible, so its screens reach the edges.
+    const ARTBOARD_W = 1920, ARTBOARD_H = 1080, MAX_BACKING_W = 2200;
+    const fitCanvas = () => {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (!w || !h) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, Math.max(1, MAX_BACKING_W / w));
+      r.resizeDrawingSurfaceToCanvas(dpr);
+      const vm = r.viewModelInstance;
+      if (!vm) return;
+      const scale = Math.min(w / ARTBOARD_W, h / ARTBOARD_H);
+      const visW = w / scale, visH = h / scale;
+      const set = (name, v) => { const p = vm.number(name); if (p) p.value = v; };
+      set('viewL', (ARTBOARD_W - visW) / 2);
+      set('viewR', (ARTBOARD_W + visW) / 2);
+      set('viewT', (ARTBOARD_H - visH) / 2);
+      set('viewB', (ARTBOARD_H + visH) / 2);
+    };
+    if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(canvas);
+    window.addEventListener('resize', fitCanvas);
+    window.addEventListener('orientationchange', fitCanvas);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', fitCanvas);
+    window.addEventListener('pageshow', fitCanvas);
+
+    // Keys (space to swim, typing a name, S sound, L language) go to the game while the
+    // canvas has focus.
+    canvas.addEventListener('pointerdown', () => canvas.focus());
+  </script>
+</body>
+</html>
