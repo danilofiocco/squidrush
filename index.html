@@ -57,6 +57,40 @@
     @media (orientation: portrait) {
       #rotate { display: flex; }
     }
+    /* The name field for phones: a real text field over the game's name pill (only a real one
+       brings up the phone's keyboard). Invisible over the pill; while typing it shows at the
+       top of the screen, clear of the keyboard. */
+    #name-field {
+      position: fixed;
+      display: none;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: transparent;
+      caret-color: transparent;
+      font: 800 16px system-ui, -apple-system, sans-serif; /* 16px+: no zoom on iPhone */
+      outline: none;
+      z-index: 5;
+      touch-action: manipulation;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    #name-field.typing {
+      left: 50% !important;
+      top: max(10px, env(safe-area-inset-top)) !important;
+      width: min(80vw, 420px) !important;
+      height: 52px !important;
+      transform: translateX(-50%);
+      background: #fff;
+      color: #000;
+      caret-color: #000;
+      font-size: 22px;
+      text-align: left;
+      box-shadow: 0 0 0 4px #000, 0 6px 0 4px #000;
+    }
     #error {
       position: fixed;
       inset: 0;
@@ -76,6 +110,8 @@
        disk won't load the .riv. -->
   <canvas id="game" tabindex="0"></canvas>
   <div id="error">The game couldn't load.</div>
+  <input id="name-field" type="text" maxlength="12" autocomplete="off" autocorrect="off"
+    autocapitalize="words" spellcheck="false" enterkeyhint="done" aria-label="Your name">
   <div id="rotate" aria-live="polite">
     <svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round" aria-hidden="true">
       <rect x="18" y="6" width="28" height="52" rx="6"/>
@@ -87,7 +123,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790876989'; // set by build.sh
+    const RIV_VERSION = '1790877333'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -200,6 +236,7 @@
       const push = (line) => { queue.value = queue.value ? queue.value + '\n' + line : line; };
       const onKey = (phase) => (e) => {
         if (e.metaKey || e.ctrlKey) return; // leave browser shortcuts alone
+        if (e.target && e.target.id === 'name-field') return; // the name field sends its own
         const code = codeOf(e);
         if (code) push(['k', phase, code, e.shiftKey ? 1 : 0].join('\t'));
         if (phase === 'down' && e.key.length === 1 && e.key !== '\t') push('t\t' + e.key);
@@ -207,6 +244,56 @@
       };
       window.addEventListener('keydown', onKey('down'));
       window.addEventListener('keyup', onKey('up'));
+      setupNameField(vm, push);
+    }
+
+    // The name field (see #name-field): shown over the game's name pill while the game over
+    // screen asks for a name. What's typed goes to the game whole ("n<TAB>name"); Enter / Done
+    // saves it (as the game's Enter key does).
+    function setupNameField(vm, push) {
+      const field = document.getElementById('name-field');
+      const overIn = vm.number('overIn'), listIn = vm.number('listIn'), pillY = vm.number('entryPillY');
+      if (!overIn || !listIn) return;
+      const PILL = { x: 960, y: 540, w: 720, h: 112 }; // ranking.luau's ENTRY_PILL
+      const READY = 1.2; // s into the game over screen: the pill has risen into place
+      let shown = false;
+      const send = () => push('n\t' + field.value.replace(/[\t\n]/g, ' ').slice(0, 12));
+      field.addEventListener('input', send);
+      field.addEventListener('focus', () => field.classList.add('typing'));
+      field.addEventListener('blur', () => field.classList.remove('typing'));
+      field.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          send();
+          push('k\tdown\t257\t0');
+          push('k\tup\t257\t0');
+          field.blur();
+        } else if (e.key === 'Escape') {
+          push('k\tdown\t256\t0');
+          push('k\tup\t256\t0');
+          field.blur();
+        }
+      });
+      (function place() {
+        requestAnimationFrame(place);
+        const want = overIn.value >= READY && listIn.value < 0;
+        if (want !== shown) {
+          shown = want;
+          field.style.display = want ? 'block' : 'none';
+          if (want) field.value = '';
+          else { field.blur(); field.classList.remove('typing'); }
+        }
+        if (!shown || field.classList.contains('typing')) return;
+        // over the pill: artboard coordinates to the page's, as the canvas fits the artboard
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        const s = Math.min(w / 1920, h / 1080);
+        const ox = (w - 1920 * s) / 2, oy = (h - 1080 * s) / 2;
+        const y = PILL.y + (pillY ? pillY.value : 0);
+        field.style.left = ox + (PILL.x - PILL.w / 2) * s + 'px';
+        field.style.top = oy + (y - PILL.h / 2) * s + 'px';
+        field.style.width = PILL.w * s + 'px';
+        field.style.height = PILL.h * s + 'px';
+      })();
     }
 
     // iPhones mute web audio while the ring/silent switch is on silent; ask for a "playback"
