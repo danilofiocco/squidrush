@@ -24,6 +24,39 @@
       height: 100dvh;
       outline: none;
     }
+    /* Landscape only: in a portrait window this covers the game (which pauses) and asks to
+       turn the device. */
+    #rotate {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 24px;
+      background: linear-gradient(#028bac, #003f51);
+      color: #fff;
+      font: 800 22px/1.3 system-ui, -apple-system, sans-serif;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      -webkit-text-stroke: 0;
+      z-index: 10;
+    }
+    #rotate-text { max-width: 14em; }
+    #rotate svg {
+      width: 96px;
+      height: 96px;
+      animation: turn 2.4s ease-in-out infinite;
+    }
+    @keyframes turn {
+      0%, 25% { transform: rotate(0deg); }
+      55%, 100% { transform: rotate(-90deg); }
+    }
+    @media (orientation: portrait) {
+      #rotate { display: flex; }
+    }
     #error {
       position: fixed;
       inset: 0;
@@ -43,6 +76,13 @@
        disk won't load the .riv. -->
   <canvas id="game" tabindex="0"></canvas>
   <div id="error">The game couldn't load.</div>
+  <div id="rotate" aria-live="polite">
+    <svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round" aria-hidden="true">
+      <rect x="18" y="6" width="28" height="52" rx="6"/>
+      <line x1="28" y1="50" x2="36" y2="50" stroke-linecap="round"/>
+    </svg>
+    <div id="rotate-text">Rotate your device to play</div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2/rive.js"></script>
   <script>
@@ -204,6 +244,32 @@
     // Keys (space to swim, typing a name, S sound, L language) go to the game while the
     // canvas has focus.
     canvas.addEventListener('pointerdown', () => canvas.focus());
+
+    // ---- Landscape only ---------------------------------------------------------------------
+    // Browsers can't force the screen round (iPhones don't allow it at all), so in portrait the
+    // #rotate cover asks for it and the game pauses (sound too) until the device turns. Where
+    // the browser allows it (Android), the first tap also goes fullscreen and locks landscape.
+    if ((navigator.language || '').toLowerCase().startsWith('pt')) {
+      document.getElementById('rotate-text').textContent = 'Gire o aparelho para jogar';
+    }
+    const portrait = window.matchMedia('(orientation: portrait)');
+    const applyOrientation = () => {
+      if (portrait.matches) r.pause();
+      else { r.play(); fitCanvas(); }
+    };
+    if (portrait.addEventListener) portrait.addEventListener('change', applyOrientation);
+    else portrait.addListener(applyOrientation);
+    r.on(rive.EventType.Load, applyOrientation);
+    const lockLandscape = () => {
+      document.removeEventListener('pointerdown', lockLandscape, true);
+      const el = document.documentElement;
+      const touch = window.matchMedia('(pointer: coarse)').matches;
+      if (!touch || !el.requestFullscreen || !screen.orientation || !screen.orientation.lock) return;
+      el.requestFullscreen({ navigationUI: 'hide' })
+        .then(() => screen.orientation.lock('landscape'))
+        .catch(() => {}); // not allowed here: the rotate cover still does the job
+    };
+    document.addEventListener('pointerdown', lockLandscape, true);
   </script>
 </body>
 </html>
