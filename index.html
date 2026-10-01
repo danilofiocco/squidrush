@@ -87,7 +87,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790872411'; // set by build.sh
+    const RIV_VERSION = '1790875898'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -219,11 +219,22 @@
     //    not the full Retina 2-3x - most of the frame time went into those extra pixels.
     //  - Responsive: the artboard (1920x1080) is fitted whole; on wider or taller windows the
     //    game is told which part of artboard space is visible, so its screens reach the edges.
-    const ARTBOARD_W = 1920, ARTBOARD_H = 1080, MAX_BACKING_W = 2200;
+    const ARTBOARD_W = 1920, ARTBOARD_H = 1080;
+    // Quality tiers (see adaptive quality below): how many device pixels across the game is
+    // drawn at, and whether the extras (light rays, caustics, shell glow) are left out.
+    const TIERS = [
+      { maxW: 2200, low: 0 },
+      { maxW: 1600, low: 0 },
+      { maxW: 1280, low: 1 },
+      { maxW: 960, low: 1 },
+    ];
+    let tier = 0;
     const fitCanvas = () => {
       const w = canvas.clientWidth, h = canvas.clientHeight;
       if (!w || !h) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, Math.max(1, MAX_BACKING_W / w));
+      const maxW = TIERS[tier].maxW;
+      // (at the lower tiers this may go below 1 CSS pixel per pixel: softer, but much cheaper)
+      const dpr = Math.min(window.devicePixelRatio || 1, tier === 0 ? Math.max(1, maxW / w) : maxW / w);
       r.resizeDrawingSurfaceToCanvas(dpr);
       const vm = r.viewModelInstance;
       if (!vm) return;
@@ -234,7 +245,40 @@
       set('viewR', (ARTBOARD_W + visW) / 2);
       set('viewT', (ARTBOARD_H - visH) / 2);
       set('viewB', (ARTBOARD_H + visH) / 2);
+      set('lowQuality', TIERS[tier].low);
     };
+
+    // ---- Adaptive quality -------------------------------------------------------------------
+    // Watches the frame rate in 2-second windows; when a device can't keep up (under 48 fps), it
+    // steps down a tier: fewer pixels first, then the extras off as well. It never steps back
+    // up (that would flicker), and it stops when a step doesn't help - a phone capped at 30 fps
+    // (iPhone Low Power Mode) shouldn't be pushed to the lowest quality for nothing.
+    // ?quality=0..3 in the address forces a tier, for testing.
+    const forced = new URLSearchParams(location.search).get('quality');
+    if (forced !== null) tier = Math.max(0, Math.min(TIERS.length - 1, parseInt(forced, 10) || 0));
+    (function watchFrameRate() {
+      const WINDOW = 2000, TARGET = 48, SETTLE = 3000;
+      let frames = 0, start = 0, skipUntil = performance.now() + 4000, lastFps = 0;
+      const reset = (now, settle) => { frames = 0; start = now; skipUntil = now + settle; };
+      document.addEventListener('visibilitychange', () => reset(performance.now(), 1000));
+      function tick(now) {
+        requestAnimationFrame(tick);
+        if (forced !== null || document.hidden || r.isPaused) { reset(now, 1000); return; }
+        if (now < skipUntil) { start = now; frames = 0; return; }
+        frames++;
+        if (now - start < WINDOW) return;
+        const fps = frames * 1000 / (now - start);
+        reset(now, 0);
+        if (fps >= TARGET || tier >= TIERS.length - 1) return;
+        if (lastFps && fps < lastFps + 3) return; // the last step didn't help: leave it
+        lastFps = fps;
+        tier++;
+        fitCanvas();
+        reset(now, SETTLE);
+        console.info('Squid Rush: ' + fps.toFixed(0) + ' fps, quality tier ' + tier);
+      }
+      requestAnimationFrame(tick);
+    })();
     if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(canvas);
     window.addEventListener('resize', fitCanvas);
     window.addEventListener('orientationchange', fitCanvas);
