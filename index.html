@@ -395,28 +395,7 @@
     syncViewport();
     if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(canvas);
     window.addEventListener('resize', syncSoon);
-    // Chrome on iPhone keeps room for its portrait bottom toolbar after turning to landscape,
-    // handing the page a squashed area (grey below the game) until a reload. Its toolbars
-    // follow page scrolling and the game never scrolls, so after a rotation the page is made
-    // a little taller, scrolled 1px down and back, to make Chrome lay its toolbars out again.
-    let nudges = 0;
-    const nudgeBrowserBars = () => {
-      const spacer = document.createElement('div');
-      spacer.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:calc(100% + 60px);' +
-        'pointer-events:none;visibility:hidden';
-      document.body.appendChild(spacer);
-      window.scrollTo(0, 1);
-      setTimeout(() => {
-        window.scrollTo(0, 0);
-        spacer.remove();
-        nudges++;
-        syncSoon();
-      }, 60);
-    };
-    window.addEventListener('orientationchange', () => {
-      syncSoon();
-      setTimeout(nudgeBrowserBars, 250);
-    });
+    window.addEventListener('orientationchange', syncSoon);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', syncSoon);
     window.addEventListener('pageshow', syncSoon);
 
@@ -484,7 +463,6 @@
           'scroll       ' + scrollX + ',' + scrollY,
           'safe t r b l ' + [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px).join(' '),
           'orientation  ' + (screen.orientation ? screen.orientation.type : window.orientation),
-          'bar nudges   ' + nudges,
         ].join('\n');
         requestAnimationFrame(show);
       };
