@@ -132,7 +132,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790952746'; // set by build.sh
+    const RIV_VERSION = '1790953073'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -419,9 +419,13 @@
     // keeps room for its portrait toolbar after the turn, leaving grey below the game, and only
     // a reload gives the page the whole screen. (Touch screens only, so resizing a desktop
     // window never reloads.)
+    // The reload waits a second for Chrome to finish turning (reloading straight away still got
+    // the squashed area); turning back to portrait in that second cancels it.
     const touchScreen = window.matchMedia('(pointer: coarse)').matches;
+    let reloadTimer = 0;
     const onOrientationChange = () => {
-      if (touchScreen && !portrait.matches) location.reload();
+      clearTimeout(reloadTimer);
+      if (touchScreen && !portrait.matches) reloadTimer = setTimeout(() => location.reload(), 1000);
       else applyOrientation();
     };
     if (portrait.addEventListener) portrait.addEventListener('change', onOrientationChange);
