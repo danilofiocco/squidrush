@@ -17,11 +17,18 @@
       -webkit-user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
+    /* Pinned to the window, with the height set from the window itself (--app-h, see
+       syncViewport): after a rotation iOS can leave 100vh/100dvh at the old size, which left
+       a strip of the page showing below the game. */
     #game {
+      position: fixed;
+      left: 0;
+      top: 0;
       display: block;
-      width: 100vw;
+      width: 100%;
       height: 100vh;
       height: 100dvh;
+      height: var(--app-h, 100dvh);
       outline: none;
     }
     /* Landscape only: in a portrait window this covers the game (which pauses) and asks to
@@ -125,7 +132,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790905512'; // set by build.sh
+    const RIV_VERSION = '1790950934'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -372,11 +379,25 @@
       }
       requestAnimationFrame(tick);
     })();
+    // Size the canvas to the window's real height (iOS can keep 100vh/100dvh at the pre-rotation
+    // size) and undo any scroll the rotation left behind. iOS reports the final size a little
+    // after a rotation, so it's checked again a few times.
+    const syncViewport = () => {
+      document.documentElement.style.setProperty('--app-h', window.innerHeight + 'px');
+      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+      fitCanvas();
+    };
+    let syncTimers = [];
+    const syncSoon = () => {
+      syncTimers.forEach(clearTimeout);
+      syncTimers = [0, 100, 300, 600, 1000].map((ms) => setTimeout(syncViewport, ms));
+    };
+    syncViewport();
     if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(canvas);
-    window.addEventListener('resize', fitCanvas);
-    window.addEventListener('orientationchange', fitCanvas);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', fitCanvas);
-    window.addEventListener('pageshow', fitCanvas);
+    window.addEventListener('resize', syncSoon);
+    window.addEventListener('orientationchange', syncSoon);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', syncSoon);
+    window.addEventListener('pageshow', syncSoon);
 
     // Keys (space to swim, typing a name, S sound, L language) go to the game while the
     // canvas has focus.
@@ -392,7 +413,7 @@
     const portrait = window.matchMedia('(orientation: portrait)');
     const applyOrientation = () => {
       if (portrait.matches) r.pause();
-      else { r.play(); fitCanvas(); }
+      else { r.play(); syncSoon(); }
     };
     if (portrait.addEventListener) portrait.addEventListener('change', applyOrientation);
     else portrait.addListener(applyOrientation);
