@@ -428,6 +428,46 @@
         .catch(() => {}); // not allowed here: the rotate cover still does the job
     };
     document.addEventListener('pointerdown', lockLandscape, true);
+
+    // ---- ?debug=1: window size readout ------------------------------------------------------
+    // For screen-fit problems on phones: the page background turns magenta (anything still grey
+    // is outside the page, drawn by the browser itself), the canvas gets a yellow border, and a
+    // box lists the sizes the browser reports, updated live.
+    if (new URLSearchParams(location.search).get('debug') === '1') {
+      document.documentElement.style.background = '#f0f';
+      document.body.style.background = '#f0f';
+      canvas.style.boxShadow = 'inset 0 0 0 3px #ff0';
+      const box = document.createElement('pre');
+      box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;' +
+        'margin:0;padding:8px 10px;background:rgba(0,0,0,.8);color:#0f0;font:11px/1.35 ui-monospace,monospace;' +
+        'pointer-events:none;white-space:pre';
+      document.body.appendChild(box);
+      const safe = document.createElement('div');
+      safe.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) ' +
+        'env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+      document.body.appendChild(safe);
+      const show = () => {
+        const v = window.visualViewport, cs = getComputedStyle(safe), d = document.documentElement;
+        const px = (n) => parseFloat(n).toFixed(0);
+        box.textContent = [
+          'inner        ' + innerWidth + ' x ' + innerHeight,
+          'outer        ' + outerWidth + ' x ' + outerHeight,
+          'html client  ' + d.clientWidth + ' x ' + d.clientHeight,
+          v ? 'visualVP     ' + v.width.toFixed(0) + ' x ' + v.height.toFixed(0) + '  scale ' + v.scale.toFixed(2) +
+            '  off ' + v.offsetLeft.toFixed(0) + ',' + v.offsetTop.toFixed(0) : 'visualVP     -',
+          'screen       ' + screen.width + ' x ' + screen.height + '  dpr ' + devicePixelRatio,
+          'canvas css   ' + canvas.clientWidth + ' x ' + canvas.clientHeight + '  rect y ' +
+            canvas.getBoundingClientRect().top.toFixed(0),
+          'canvas buf   ' + canvas.width + ' x ' + canvas.height,
+          '--app-h      ' + (d.style.getPropertyValue('--app-h') || '-'),
+          'scroll       ' + scrollX + ',' + scrollY,
+          'safe t r b l ' + [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px).join(' '),
+          'orientation  ' + (screen.orientation ? screen.orientation.type : window.orientation),
+        ].join('\n');
+        requestAnimationFrame(show);
+      };
+      show();
+    }
   </script>
 </body>
 </html>
