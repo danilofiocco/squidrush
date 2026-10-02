@@ -425,7 +425,7 @@
     let reloadTimer = 0;
     const onOrientationChange = () => {
       clearTimeout(reloadTimer);
-      if (touchScreen && !portrait.matches) reloadTimer = setTimeout(() => {
+      if (touchScreen && !debugMode && !portrait.matches) reloadTimer = setTimeout(() => {
         try { sessionStorage.removeItem('squidrushFitReloads'); } catch (e) {} // a new turn: fresh tries
         location.reload();
       }, 1000);
@@ -441,7 +441,8 @@
       try { return parseInt(sessionStorage.getItem(RELOAD_KEY), 10) || 0; } catch (e) { return MAX_FIT_RELOADS; }
     };
     const squashed = () => window.innerHeight < SQUASHED * Math.min(screen.width, screen.height);
-    if (touchScreen) setTimeout(() => {
+    const debugMode = new URLSearchParams(location.search).get('debug') === '1';
+    if (touchScreen && !debugMode) setTimeout(() => {
       if (portrait.matches) return;
       try {
         if (!squashed()) sessionStorage.removeItem(RELOAD_KEY);
@@ -478,6 +479,43 @@
         'margin:0;padding:8px 10px;background:rgba(0,0,0,.8);color:#0f0;font:11px/1.35 ui-monospace,monospace;' +
         'pointer-events:none;white-space:pre';
       document.body.appendChild(box);
+      // Test buttons: which kind of reload (or scroll) gets Chrome on the XR to give the page the
+      // whole screen. No automatic fit reloads in debug mode, so each can be tried by hand.
+      const tests = document.createElement('div');
+      tests.style.cssText = 'position:fixed;left:8px;top:8px;z-index:21;display:flex;flex-wrap:wrap;gap:6px;' +
+        'max-width:60vw';
+      const withNonce = () => {
+        const u = new URL(location.href);
+        u.searchParams.set('n', Date.now());
+        return u.href;
+      };
+      const addTest = (label, run) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = 'font:700 13px system-ui;padding:8px 10px;border:0;border-radius:6px;' +
+          'background:#ff0;color:#000;touch-action:manipulation';
+        b.addEventListener('click', (e) => { e.stopPropagation(); run(b); });
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        tests.appendChild(b);
+      };
+      addTest('A reload', () => location.reload());
+      addTest('B replace', () => location.replace(withNonce()));
+      addTest('C new url', () => { location.href = withNonce(); });
+      addTest('D scroll on', (b) => {
+        // lets the page be swiped up and down like a normal page, to see if Chrome's own
+        // toolbar handling fixes the size
+        for (const el of [document.documentElement, document.body]) {
+          el.style.overflow = 'auto';
+          el.style.touchAction = 'auto';
+          el.style.height = 'auto';
+        }
+        canvas.style.pointerEvents = 'none';
+        const tall = document.createElement('div');
+        tall.style.cssText = 'height:250vh;width:1px';
+        document.body.appendChild(tall);
+        b.textContent = 'D: now swipe';
+      });
+      document.body.appendChild(tests);
       const safe = document.createElement('div');
       safe.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) ' +
         'env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
