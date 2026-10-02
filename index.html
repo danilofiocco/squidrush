@@ -64,6 +64,35 @@
     @media (orientation: portrait) {
       #rotate { display: flex; }
     }
+    /* Swipe-up prompt for when the browser leaves the page squashed (see checkFit). Swipes go
+       through it to the page underneath. */
+    #swipe {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(0, 40, 52, 0.75);
+      color: #fff;
+      font: 800 22px/1.3 system-ui, -apple-system, sans-serif;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+      z-index: 9;
+    }
+    #swipe svg {
+      width: 64px;
+      height: 64px;
+      animation: swipe-up 1.2s ease-in-out infinite;
+    }
+    @keyframes swipe-up {
+      0% { transform: translateY(16px); opacity: 0; }
+      30% { opacity: 1; }
+      100% { transform: translateY(-16px); opacity: 0; }
+    }
     /* The name field for phones: a real text field over the game's name pill (only a real one
        brings up the phone's keyboard). Invisible over the pill; while typing it shows at the
        top of the screen, clear of the keyboard. */
@@ -125,6 +154,12 @@
       <line x1="28" y1="50" x2="36" y2="50" stroke-linecap="round"/>
     </svg>
     <div id="rotate-text">Rotate your device to play</div>
+  </div>
+  <div id="swipe" aria-live="polite">
+    <svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M32 54V12M18 26l14-14 14 14"/>
+    </svg>
+    <div id="swipe-text">Swipe up to play</div>
   </div>
 
   <!-- Pinned: an unpinned URL picks up new runtimes untested (2.44.0 raised the iPad keyboard
@@ -384,7 +419,8 @@
     // after a rotation, so it's checked again a few times.
     const syncViewport = () => {
       document.documentElement.style.setProperty('--app-h', window.innerHeight + 'px');
-      if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+      // (not while the swipe prompt has made the page scrollable: that scroll is the player's)
+      if ((window.scrollX || window.scrollY) && !document.documentElement.style.overflow) window.scrollTo(0, 0);
       fitCanvas();
     };
     let syncTimers = [];
@@ -409,49 +445,60 @@
     // the browser allows it (Android), the first tap also goes fullscreen and locks landscape.
     if ((navigator.language || '').toLowerCase().startsWith('pt')) {
       document.getElementById('rotate-text').textContent = 'Gire o aparelho para jogar';
+      document.getElementById('swipe-text').textContent = 'Deslize para cima para jogar';
     }
     const portrait = window.matchMedia('(orientation: portrait)');
+    // Chrome on older iPhones (XR) keeps room for its portrait bottom toolbar after turning to
+    // landscape: the page gets a squashed area with grey below the game. Reloading doesn't fix
+    // it, nor does scrolling from code - only the player swiping the page does. So when the page
+    // is squashed in landscape, the game pauses, the page becomes scrollable and #swipe asks for
+    // a swipe; once the page has its height back, it locks again and the game carries on.
+    // Squashed = under 70% of the screen's short side (on the XR: squashed 236 of 375 points,
+    // good 292).
+    const touchScreen = window.matchMedia('(pointer: coarse)').matches;
+    const swipeCover = document.getElementById('swipe');
+    const squashed = () => window.innerHeight < 0.7 * Math.min(screen.width, screen.height);
+    let swipeMode = false, swipeSpacer = null;
     const applyOrientation = () => {
-      if (portrait.matches) r.pause();
+      if (portrait.matches || swipeMode) r.pause();
       else { r.play(); syncSoon(); }
     };
-    // Turning a phone or tablet to landscape reloads the page: Chrome on older iPhones (XR)
-    // keeps room for its portrait toolbar after the turn, leaving grey below the game, and only
-    // a reload gives the page the whole screen. (Touch screens only, so resizing a desktop
-    // window never reloads.)
-    // The reload waits a second for Chrome to finish turning (reloading straight away still got
-    // the squashed area); turning back to portrait in that second cancels it.
-    const touchScreen = window.matchMedia('(pointer: coarse)').matches;
-    let reloadTimer = 0;
+    const setScrollable = (on) => {
+      for (const el of [document.documentElement, document.body]) {
+        el.style.overflow = on ? 'auto' : '';
+        el.style.touchAction = on ? 'auto' : '';
+        el.style.height = on ? 'auto' : '';
+      }
+      canvas.style.pointerEvents = on ? 'none' : '';
+    };
+    const checkFit = () => {
+      const want = touchScreen && !portrait.matches && squashed();
+      if (want === swipeMode) return;
+      swipeMode = want;
+      setScrollable(want);
+      if (want) {
+        swipeSpacer = document.createElement('div');
+        swipeSpacer.style.cssText = 'height:250vh;width:1px';
+        document.body.appendChild(swipeSpacer);
+      } else if (swipeSpacer) {
+        swipeSpacer.remove();
+        swipeSpacer = null;
+        window.scrollTo(0, 0);
+      }
+      swipeCover.style.display = want ? 'flex' : '';
+      applyOrientation();
+    };
+    // checked a moment after loading or turning (Chrome reports the final size late), and on
+    // every size change or scroll while waiting for the swipe
+    const checkFitSoon = () => [300, 1000].forEach((ms) => setTimeout(checkFit, ms));
+    checkFitSoon();
+    window.addEventListener('resize', () => { if (swipeMode) checkFit(); });
+    window.addEventListener('scroll', () => { if (swipeMode) checkFit(); }, { passive: true });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (swipeMode) checkFit(); });
     const onOrientationChange = () => {
-      clearTimeout(reloadTimer);
-      if (touchScreen && !debugMode && !portrait.matches) reloadTimer = setTimeout(() => {
-        try { sessionStorage.removeItem('squidrushFitReloads'); } catch (e) {} // a new turn: fresh tries
-        location.reload();
-      }, 1000);
-      else applyOrientation();
+      applyOrientation();
+      checkFitSoon();
     };
-    // After such a reload Chrome can still hand over the squashed area, so a second after loading
-    // in landscape the page checks its height against the screen and reloads again if it's
-    // short: on the XR the squashed page is 236 of the screen's 375 points (63%), a good one
-    // 292 (78%). At most 3 reloads in a row (sessionStorage), so a small window - an iPad in
-    // Split View, say - can't loop.
-    const RELOAD_KEY = 'squidrushFitReloads', SQUASHED = 0.7, MAX_FIT_RELOADS = 3;
-    const fitReloads = () => {
-      try { return parseInt(sessionStorage.getItem(RELOAD_KEY), 10) || 0; } catch (e) { return MAX_FIT_RELOADS; }
-    };
-    const squashed = () => window.innerHeight < SQUASHED * Math.min(screen.width, screen.height);
-    const debugMode = new URLSearchParams(location.search).get('debug') === '1';
-    if (touchScreen && !debugMode) setTimeout(() => {
-      if (portrait.matches) return;
-      try {
-        if (!squashed()) sessionStorage.removeItem(RELOAD_KEY);
-        else if (fitReloads() < MAX_FIT_RELOADS) {
-          sessionStorage.setItem(RELOAD_KEY, fitReloads() + 1);
-          location.reload();
-        }
-      } catch (e) {}
-    }, 1000);
     if (portrait.addEventListener) portrait.addEventListener('change', onOrientationChange);
     else portrait.addListener(onOrientationChange);
     r.on(rive.EventType.Load, applyOrientation);
@@ -479,43 +526,6 @@
         'margin:0;padding:8px 10px;background:rgba(0,0,0,.8);color:#0f0;font:11px/1.35 ui-monospace,monospace;' +
         'pointer-events:none;white-space:pre';
       document.body.appendChild(box);
-      // Test buttons: which kind of reload (or scroll) gets Chrome on the XR to give the page the
-      // whole screen. No automatic fit reloads in debug mode, so each can be tried by hand.
-      const tests = document.createElement('div');
-      tests.style.cssText = 'position:fixed;left:8px;top:8px;z-index:21;display:flex;flex-wrap:wrap;gap:6px;' +
-        'max-width:60vw';
-      const withNonce = () => {
-        const u = new URL(location.href);
-        u.searchParams.set('n', Date.now());
-        return u.href;
-      };
-      const addTest = (label, run) => {
-        const b = document.createElement('button');
-        b.textContent = label;
-        b.style.cssText = 'font:700 13px system-ui;padding:8px 10px;border:0;border-radius:6px;' +
-          'background:#ff0;color:#000;touch-action:manipulation';
-        b.addEventListener('click', (e) => { e.stopPropagation(); run(b); });
-        b.addEventListener('pointerdown', (e) => e.stopPropagation());
-        tests.appendChild(b);
-      };
-      addTest('A reload', () => location.reload());
-      addTest('B replace', () => location.replace(withNonce()));
-      addTest('C new url', () => { location.href = withNonce(); });
-      addTest('D scroll on', (b) => {
-        // lets the page be swiped up and down like a normal page, to see if Chrome's own
-        // toolbar handling fixes the size
-        for (const el of [document.documentElement, document.body]) {
-          el.style.overflow = 'auto';
-          el.style.touchAction = 'auto';
-          el.style.height = 'auto';
-        }
-        canvas.style.pointerEvents = 'none';
-        const tall = document.createElement('div');
-        tall.style.cssText = 'height:250vh;width:1px';
-        document.body.appendChild(tall);
-        b.textContent = 'D: now swipe';
-      });
-      document.body.appendChild(tests);
       const safe = document.createElement('div');
       safe.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) ' +
         'env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
@@ -537,7 +547,7 @@
           'scroll       ' + scrollX + ',' + scrollY,
           'safe t r b l ' + [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px).join(' '),
           'orientation  ' + (screen.orientation ? screen.orientation.type : window.orientation),
-          'squashed     ' + squashed() + '  fit reloads ' + fitReloads(),
+          'squashed     ' + squashed() + '  swipe prompt ' + swipeMode,
         ].join('\n');
         requestAnimationFrame(show);
       };
