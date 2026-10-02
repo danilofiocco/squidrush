@@ -17,18 +17,11 @@
       -webkit-user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
-    /* Pinned to the window, with the height set from the window itself (--app-h, see
-       syncViewport): after a rotation iOS can leave 100vh/100dvh at the old size, which left
-       a strip of the page showing below the game. */
     #game {
-      position: fixed;
-      left: 0;
-      top: 0;
       display: block;
-      width: 100%;
+      width: 100vw;
       height: 100vh;
       height: 100dvh;
-      height: var(--app-h, 100dvh);
       outline: none;
     }
     /* Landscape only: in a portrait window this covers the game (which pauses) and asks to
@@ -63,35 +56,6 @@
     }
     @media (orientation: portrait) {
       #rotate { display: flex; }
-    }
-    /* Swipe-up prompt for when the browser leaves the page squashed (see checkFit). Swipes go
-       through it to the page underneath. */
-    #swipe {
-      position: fixed;
-      inset: 0;
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      background: rgba(0, 40, 52, 0.75);
-      color: #fff;
-      font: 800 22px/1.3 system-ui, -apple-system, sans-serif;
-      text-align: center;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-      pointer-events: none;
-      z-index: 9;
-    }
-    #swipe svg {
-      width: 64px;
-      height: 64px;
-      animation: swipe-up 1.2s ease-in-out infinite;
-    }
-    @keyframes swipe-up {
-      0% { transform: translateY(16px); opacity: 0; }
-      30% { opacity: 1; }
-      100% { transform: translateY(-16px); opacity: 0; }
     }
     /* The name field for phones: a real text field over the game's name pill (only a real one
        brings up the phone's keyboard). Invisible over the pill; while typing it shows at the
@@ -155,19 +119,13 @@
     </svg>
     <div id="rotate-text">Rotate your device to play</div>
   </div>
-  <div id="swipe" aria-live="polite">
-    <svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M32 54V12M18 26l14-14 14 14"/>
-    </svg>
-    <div id="swipe-text">Swipe up to play</div>
-  </div>
 
   <!-- Pinned: an unpinned URL picks up new runtimes untested (2.44.0 raised the iPad keyboard
        on every tap). -->
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790953326'; // set by build.sh
+    const RIV_VERSION = '1790905512'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -414,26 +372,11 @@
       }
       requestAnimationFrame(tick);
     })();
-    // Size the canvas to the window's real height (iOS can keep 100vh/100dvh at the pre-rotation
-    // size) and undo any scroll the rotation left behind. iOS reports the final size a little
-    // after a rotation, so it's checked again a few times.
-    const syncViewport = () => {
-      document.documentElement.style.setProperty('--app-h', window.innerHeight + 'px');
-      // (not while the swipe prompt has made the page scrollable: that scroll is the player's)
-      if ((window.scrollX || window.scrollY) && !document.documentElement.style.overflow) window.scrollTo(0, 0);
-      fitCanvas();
-    };
-    let syncTimers = [];
-    const syncSoon = () => {
-      syncTimers.forEach(clearTimeout);
-      syncTimers = [0, 100, 300, 600, 1000].map((ms) => setTimeout(syncViewport, ms));
-    };
-    syncViewport();
     if (window.ResizeObserver) new ResizeObserver(fitCanvas).observe(canvas);
-    window.addEventListener('resize', syncSoon);
-    window.addEventListener('orientationchange', syncSoon);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', syncSoon);
-    window.addEventListener('pageshow', syncSoon);
+    window.addEventListener('resize', fitCanvas);
+    window.addEventListener('orientationchange', fitCanvas);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', fitCanvas);
+    window.addEventListener('pageshow', fitCanvas);
 
     // Keys (space to swim, typing a name, S sound, L language) go to the game while the
     // canvas has focus.
@@ -445,62 +388,14 @@
     // the browser allows it (Android), the first tap also goes fullscreen and locks landscape.
     if ((navigator.language || '').toLowerCase().startsWith('pt')) {
       document.getElementById('rotate-text').textContent = 'Gire o aparelho para jogar';
-      document.getElementById('swipe-text').textContent = 'Deslize para cima para jogar';
     }
     const portrait = window.matchMedia('(orientation: portrait)');
-    // Chrome on older iPhones (XR) keeps room for its portrait bottom toolbar after turning to
-    // landscape: the page gets a squashed area with grey below the game. Reloading doesn't fix
-    // it, nor does scrolling from code - only the player swiping the page does. So when the page
-    // is squashed in landscape, the game pauses, the page becomes scrollable and #swipe asks for
-    // a swipe; once the page has its height back, it locks again and the game carries on.
-    // Squashed = under 70% of the screen's short side (on the XR: squashed 236 of 375 points,
-    // good 292).
-    const touchScreen = window.matchMedia('(pointer: coarse)').matches;
-    const swipeCover = document.getElementById('swipe');
-    const squashed = () => window.innerHeight < 0.7 * Math.min(screen.width, screen.height);
-    let swipeMode = false, swipeSpacer = null;
     const applyOrientation = () => {
-      if (portrait.matches || swipeMode) r.pause();
-      else { r.play(); syncSoon(); }
+      if (portrait.matches) r.pause();
+      else { r.play(); fitCanvas(); }
     };
-    const setScrollable = (on) => {
-      for (const el of [document.documentElement, document.body]) {
-        el.style.overflow = on ? 'auto' : '';
-        el.style.touchAction = on ? 'auto' : '';
-        el.style.height = on ? 'auto' : '';
-      }
-      canvas.style.pointerEvents = on ? 'none' : '';
-    };
-    const checkFit = () => {
-      const want = touchScreen && !portrait.matches && squashed();
-      if (want === swipeMode) return;
-      swipeMode = want;
-      setScrollable(want);
-      if (want) {
-        swipeSpacer = document.createElement('div');
-        swipeSpacer.style.cssText = 'height:250vh;width:1px';
-        document.body.appendChild(swipeSpacer);
-      } else if (swipeSpacer) {
-        swipeSpacer.remove();
-        swipeSpacer = null;
-        window.scrollTo(0, 0);
-      }
-      swipeCover.style.display = want ? 'flex' : '';
-      applyOrientation();
-    };
-    // checked a moment after loading or turning (Chrome reports the final size late), and on
-    // every size change or scroll while waiting for the swipe
-    const checkFitSoon = () => [300, 1000].forEach((ms) => setTimeout(checkFit, ms));
-    checkFitSoon();
-    window.addEventListener('resize', () => { if (swipeMode) checkFit(); });
-    window.addEventListener('scroll', () => { if (swipeMode) checkFit(); }, { passive: true });
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (swipeMode) checkFit(); });
-    const onOrientationChange = () => {
-      applyOrientation();
-      checkFitSoon();
-    };
-    if (portrait.addEventListener) portrait.addEventListener('change', onOrientationChange);
-    else portrait.addListener(onOrientationChange);
+    if (portrait.addEventListener) portrait.addEventListener('change', applyOrientation);
+    else portrait.addListener(applyOrientation);
     r.on(rive.EventType.Load, applyOrientation);
     const lockLandscape = () => {
       document.removeEventListener('pointerdown', lockLandscape, true);
@@ -512,47 +407,6 @@
         .catch(() => {}); // not allowed here: the rotate cover still does the job
     };
     document.addEventListener('pointerdown', lockLandscape, true);
-
-    // ---- ?debug=1: window size readout ------------------------------------------------------
-    // For screen-fit problems on phones: the page background turns magenta (anything still grey
-    // is outside the page, drawn by the browser itself), the canvas gets a yellow border, and a
-    // box lists the sizes the browser reports, updated live.
-    if (new URLSearchParams(location.search).get('debug') === '1') {
-      document.documentElement.style.background = '#f0f';
-      document.body.style.background = '#f0f';
-      canvas.style.boxShadow = 'inset 0 0 0 3px #ff0';
-      const box = document.createElement('pre');
-      box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:20;' +
-        'margin:0;padding:8px 10px;background:rgba(0,0,0,.8);color:#0f0;font:11px/1.35 ui-monospace,monospace;' +
-        'pointer-events:none;white-space:pre';
-      document.body.appendChild(box);
-      const safe = document.createElement('div');
-      safe.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) ' +
-        'env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
-      document.body.appendChild(safe);
-      const show = () => {
-        const v = window.visualViewport, cs = getComputedStyle(safe), d = document.documentElement;
-        const px = (n) => parseFloat(n).toFixed(0);
-        box.textContent = [
-          'inner        ' + innerWidth + ' x ' + innerHeight,
-          'outer        ' + outerWidth + ' x ' + outerHeight,
-          'html client  ' + d.clientWidth + ' x ' + d.clientHeight,
-          v ? 'visualVP     ' + v.width.toFixed(0) + ' x ' + v.height.toFixed(0) + '  scale ' + v.scale.toFixed(2) +
-            '  off ' + v.offsetLeft.toFixed(0) + ',' + v.offsetTop.toFixed(0) : 'visualVP     -',
-          'screen       ' + screen.width + ' x ' + screen.height + '  dpr ' + devicePixelRatio,
-          'canvas css   ' + canvas.clientWidth + ' x ' + canvas.clientHeight + '  rect y ' +
-            canvas.getBoundingClientRect().top.toFixed(0),
-          'canvas buf   ' + canvas.width + ' x ' + canvas.height,
-          '--app-h      ' + (d.style.getPropertyValue('--app-h') || '-'),
-          'scroll       ' + scrollX + ',' + scrollY,
-          'safe t r b l ' + [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px).join(' '),
-          'orientation  ' + (screen.orientation ? screen.orientation.type : window.orientation),
-          'squashed     ' + squashed() + '  swipe prompt ' + swipeMode,
-        ].join('\n');
-        requestAnimationFrame(show);
-      };
-      show();
-    }
   </script>
 </body>
 </html>
