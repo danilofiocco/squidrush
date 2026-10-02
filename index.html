@@ -120,7 +120,9 @@
     <div id="rotate-text">Rotate your device to play</div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2/rive.js"></script>
+  <!-- Pinned: an unpinned URL picks up new runtimes untested (2.44.0 raised the iPad keyboard
+       on every tap). -->
+  <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
     const RIV_VERSION = '1790883270'; // set by build.sh
@@ -139,6 +141,10 @@
       // 1920x1080 artboard, letterboxed to fit any window.
       layout: new rive.Layout({ fit: rive.Fit.Contain, alignment: rive.Alignment.Center }),
       onLoad: () => {
+        // No text session from the runtime (2.44+): its hidden text field gets focused on every
+        // tap (the game script listens for keys), which pops up the iPad/phone keyboard. This page
+        // passes the keyboard on itself (hostKeys) and has its own field for names.
+        r.wantsTextInputSession = () => false;
         fitCanvas();
         const vm = r.viewModelInstance;
         if (vm) {
