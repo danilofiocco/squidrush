@@ -132,7 +132,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790950934'; // set by build.sh
+    const RIV_VERSION = '1790952746'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -415,8 +415,17 @@
       if (portrait.matches) r.pause();
       else { r.play(); syncSoon(); }
     };
-    if (portrait.addEventListener) portrait.addEventListener('change', applyOrientation);
-    else portrait.addListener(applyOrientation);
+    // Turning a phone or tablet to landscape reloads the page: Chrome on older iPhones (XR)
+    // keeps room for its portrait toolbar after the turn, leaving grey below the game, and only
+    // a reload gives the page the whole screen. (Touch screens only, so resizing a desktop
+    // window never reloads.)
+    const touchScreen = window.matchMedia('(pointer: coarse)').matches;
+    const onOrientationChange = () => {
+      if (touchScreen && !portrait.matches) location.reload();
+      else applyOrientation();
+    };
+    if (portrait.addEventListener) portrait.addEventListener('change', onOrientationChange);
+    else portrait.addListener(onOrientationChange);
     r.on(rive.EventType.Load, applyOrientation);
     const lockLandscape = () => {
       document.removeEventListener('pointerdown', lockLandscape, true);
