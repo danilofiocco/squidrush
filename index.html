@@ -132,7 +132,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@rive-app/webgl2@2.43.1/rive.js"></script>
   <script>
     const canvas = document.getElementById('game');
-    const RIV_VERSION = '1790953073'; // set by build.sh
+    const RIV_VERSION = '1790953326'; // set by build.sh
 
     const r = new rive.Rive({
       // build.sh stamps a new version on every build, so the browser fetches the new file
@@ -425,9 +425,32 @@
     let reloadTimer = 0;
     const onOrientationChange = () => {
       clearTimeout(reloadTimer);
-      if (touchScreen && !portrait.matches) reloadTimer = setTimeout(() => location.reload(), 1000);
+      if (touchScreen && !portrait.matches) reloadTimer = setTimeout(() => {
+        try { sessionStorage.removeItem('squidrushFitReloads'); } catch (e) {} // a new turn: fresh tries
+        location.reload();
+      }, 1000);
       else applyOrientation();
     };
+    // After such a reload Chrome can still hand over the squashed area, so a second after loading
+    // in landscape the page checks its height against the screen and reloads again if it's
+    // short: on the XR the squashed page is 236 of the screen's 375 points (63%), a good one
+    // 292 (78%). At most 3 reloads in a row (sessionStorage), so a small window - an iPad in
+    // Split View, say - can't loop.
+    const RELOAD_KEY = 'squidrushFitReloads', SQUASHED = 0.7, MAX_FIT_RELOADS = 3;
+    const fitReloads = () => {
+      try { return parseInt(sessionStorage.getItem(RELOAD_KEY), 10) || 0; } catch (e) { return MAX_FIT_RELOADS; }
+    };
+    const squashed = () => window.innerHeight < SQUASHED * Math.min(screen.width, screen.height);
+    if (touchScreen) setTimeout(() => {
+      if (portrait.matches) return;
+      try {
+        if (!squashed()) sessionStorage.removeItem(RELOAD_KEY);
+        else if (fitReloads() < MAX_FIT_RELOADS) {
+          sessionStorage.setItem(RELOAD_KEY, fitReloads() + 1);
+          location.reload();
+        }
+      } catch (e) {}
+    }, 1000);
     if (portrait.addEventListener) portrait.addEventListener('change', onOrientationChange);
     else portrait.addListener(onOrientationChange);
     r.on(rive.EventType.Load, applyOrientation);
@@ -476,6 +499,7 @@
           'scroll       ' + scrollX + ',' + scrollY,
           'safe t r b l ' + [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px).join(' '),
           'orientation  ' + (screen.orientation ? screen.orientation.type : window.orientation),
+          'squashed     ' + squashed() + '  fit reloads ' + fitReloads(),
         ].join('\n');
         requestAnimationFrame(show);
       };
